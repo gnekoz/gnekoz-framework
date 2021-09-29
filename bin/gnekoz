@@ -1,0 +1,330 @@
+<?php
+/*
+ * Gnekoz Framework for PHP applications
+ * Copyright (C) 2012  Luca Stauble
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+ 
+ 
+array_shift($argv);
+
+$argc = count($argv);  
+
+if ($argc == 0) 
+{
+  printHelp();  
+}
+
+// Resolve paths
+$root = realpath(dirname(__FILE__).DIRECTORY_SEPARATOR."..");
+$appsPath = $root.DIRECTORY_SEPARATOR."applications";
+
+// Check command
+switch ($argv[0]) 
+{
+  case "help":
+    printHelp();
+    
+  case "add":
+    if ($argc < 3) printHelp();
+    
+    switch ($argv[1]) 
+    {
+      case "application":
+        createAppSkeleton(strtolower($argv[2]));
+				exit(0);				
+      
+      case "controller";
+      	if ($argc < 4) printHelp();
+				createController($argv[2], $argv[3]);
+				exit(0);
+
+			case "action";
+			if ($argc < 5) printHelp();
+				createAction($argv[2], $argv[3], $argv[4]);
+				exit(0);
+    }    
+    
+  default:
+    printHelp();
+}
+
+exit(0);
+
+
+function printHelp() 
+{
+  echo <<<EOT
+Gnekoz command line tool
+  
+Usage: php gnekoz <COMMAND> <OPTION>
+  
+Commands:
+   help                                 : show this help
+   add applicaton <NAME>                : add an application skeleton with 
+                                          given name.
+   add controller <NAME> <APP>          : add a controller with given name
+                                          to APP application. The controller 
+                                          will contain the default action.
+   add action <NAME> <CONTROLLER> <APP> : add the NAME action to the
+                                          CONTROLLER controller of APP
+                                          application.                                                 
+EOT;
+  echo "\n";
+  exit(0);
+}
+
+
+function getAppPath($name)
+{
+	global $appsPath;
+	return $appsPath.DIRECTORY_SEPARATOR.strtolower($name);
+}
+
+function createAppSkeleton($name)
+{
+	$name = strtolower($name);
+	$appPath = getAppPath($name);
+	$controllersPath = $appPath.DIRECTORY_SEPARATOR."controllers"; 
+	$libPath = $appPath.DIRECTORY_SEPARATOR."lib";
+	$viewsPath = $appPath.DIRECTORY_SEPARATOR."views";
+	$resourcesPath = $appPath.DIRECTORY_SEPARATOR."resources";
+	$confPath = $appPath.DIRECTORY_SEPARATOR."conf";
+	$publicPath = $appPath.DIRECTORY_SEPARATOR."public";
+		
+	if (file_exists($appPath)) {
+		echo "ERROR: application '$name' already exists\n";
+		exit(1);
+	}
+	
+	echo "Creating directory hierarchy in $appPath..."	;
+	mkdir($appPath);
+	echo ".";
+	mkdir($controllersPath);
+	echo ".";
+	mkdir($viewsPath);
+	echo ".";
+    mkdir($libPath);
+    echo ".";	
+	mkdir($resourcesPath);
+	echo ".";
+	mkdir($confPath);
+	echo ".";
+	mkdir($publicPath);
+	echo "done!\n";
+		
+	createController("Home", $name);
+	createAction("index", "Home", $name);
+	
+	echo "Creating default configuration file...";
+	file_put_contents($confPath.DIRECTORY_SEPARATOR."main.xml",
+					  getDefaultMainConfContent());
+	echo "done!\n";	
+
+	echo "Creating bootloader...";
+	file_put_contents($publicPath.DIRECTORY_SEPARATOR."bootloader.php",
+					  getBootloaderContent());
+	echo "done!\n";
+
+	echo "Creating htaccess file...";
+	file_put_contents($publicPath.DIRECTORY_SEPARATOR.".htaccess",
+					  getHtAccessContent($name));
+	echo "done!\n";
+	
+	echo "Creating App file...";
+	file_put_contents($appPath.DIRECTORY_SEPARATOR."App.php",
+	                  getAppContent($name));
+	echo "done!\n";
+	
+	echo "Application '$name' successfully created\n";
+}
+
+
+function createController($name, $app)
+{	
+	$app = strtolower($app);
+	$name = ucfirst(strtolower($name));
+  $appPath = getAppPath($app);	
+	$basePath = $appPath.DIRECTORY_SEPARATOR."controllers";
+	$filePath = $basePath.DIRECTORY_SEPARATOR."$name.php";
+	if (!file_exists($basePath)) 
+	{
+		echo "ERROR: application '$app' controllers directory doesn't exist\n";
+		exit(1);
+	}			
+	if (file_exists($filePath)) 
+	{
+		echo "ERROR: controller '$name' already exists\n";
+		exit(1);
+	}
+	
+	echo "Creating '$name' controller...";
+	file_put_contents($filePath, getControllerSource($name, $app));	
+	echo "done!\n"; 
+}
+
+
+function createAction($name, $controller, $app)
+{
+	$app = strtolower($app);
+	$name = strtolower($name);
+	$controller = ucfirst(strtolower($controller));
+	$appPath = getAppPath($app);
+	$basePath = $appPath.DIRECTORY_SEPARATOR."controllers";
+	$filePath = $basePath.DIRECTORY_SEPARATOR."$controller.php";
+	if (!file_exists($basePath))
+	{
+		echo "ERROR: controller '$controller' doesn't exists in '$app'\n";
+		exit(1);
+	}
+	
+	$controllerSource = file_get_contents($filePath);
+	$injectionPos = strrpos($controllerSource, "}");
+	$controllerSource = substr($controllerSource, 0, $injectionPos - 1)
+	                    . "\n\n" . getActionSource($name) . "\n"
+	                    . substr($controllerSource, $injectionPos); 	
+
+	echo "Creating '$name' action...";
+	file_put_contents($filePath, $controllerSource);
+	echo "done!\n";
+}
+
+
+function getControllerSource($name, $app)
+{
+	$className = ucfirst($name);
+	return <<<EOT
+<?php
+namespace $app\controllers;
+
+use gnekoz\Controller;
+
+class $className extends Controller
+{
+	public function init()
+	{
+	}
+}
+EOT;
+}
+
+
+function getActionSource($name)
+{
+	$name = strtolower($name);
+	$questo = '$this';
+	return <<<EOT
+	public function $name()
+	{
+			{$questo}->getResponse()->addOutput("$name action in action!");
+	}
+EOT;
+}
+
+
+function getDefaultMainConfContent()
+{
+	return <<<EOT
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+	<libraries>
+		<!--<library>smarty</library>-->
+	</libraries>
+	<php>
+		<date.timezone>Europe/Rome</date.timezone>
+		<display_errors>off</display_errors>
+	</php>
+	<profiles>
+		<profile id="development">
+			<php>
+			  <date.timezone>Europe/Rome</date.timezone>		
+				<display_errors>on</display_errors>
+				<error_reporting>22527</error_reporting>
+			</php>		
+		</profile>
+	</profiles>
+</configuration>
+EOT;
+}
+
+
+function getDefaultConfContent()
+{
+	return <<<EOT
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+	<profiles>
+		<profile id="development">
+		</profile>
+	</profiles>
+</configuration>
+EOT;
+}
+
+
+function getBootloaderContent()
+{
+	return <<<EOT
+<?php
+require_once '../../../lib/gnekoz/Core.php';
+EOT;
+}
+
+function getHtAccessContent($app)
+{
+	return "FallbackResource /$app/bootloader.php";
+}
+
+function getAppContent($app)
+{
+    // workaround :)
+    $instance = '$instance';
+    $id = '$id';
+    
+    return <<<EOT
+<?php
+namespace $app;
+
+use gnekoz\Application;
+
+class App extends Application
+{
+    public static function getInstance()
+    {
+      return Application::getApplication("$app");
+    }
+    
+    public function onInitialize()
+    {       
+    }
+    
+    public function onShutdown()
+    {       
+    }
+        
+    public function onSessionCreate($id)
+    {       
+    }
+    
+    public function onSessionDestroy($id)
+    {
+    }
+    
+    public function onSessionRestore($id)
+    {
+    }    
+}     
+EOT;
+}
